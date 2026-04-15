@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  PlayOn Plugin STVI Configuration Panel
+  This is a placeholder for the SageTV V9 Plugin Configuration UI.
+
+  The PlayOn plugin uses SageTV's built-in plugin configuration mechanism
+  (CONFIG_CHOICES/CONFIG_TEXT/CONFIG_BOOL/CONFIG_BUTTON) rather than a
+  custom STVI panel. All settings are managed through PlayOnPlugin.java's
+  getConfigSettings()/getConfigValues()/setConfigValues() methods.
+
+  A custom STVI can be added in a future release for richer UI features
+  (recording queue browser, download progress, service catalog, etc.).
+-->
+<Widget>
+  <Module Name="PlayOn Cloud" Version="1.0.0">
+    <!-- Future: custom STVI configuration UI panels -->
+  </Module>
+</Widget>

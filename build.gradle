@@ -1,0 +1,73 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.galeforcesage.playon'
+version = '1.0.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+sourceSets {
+    api {
+        java {
+            srcDirs = ['src/api/java']
+        }
+    }
+    main {
+        java {
+            srcDirs = ['src/main/java']
+        }
+        compileClasspath += sourceSets.api.output
+    }
+    test {
+        java {
+            srcDirs = ['src/test/java']
+        }
+        compileClasspath += sourceSets.api.output + sourceSets.main.output
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Jackson — standard in the SageTV plugin ecosystem (jackson-core/databind/annotations 2.9.8+)
+    // We use a newer version for Java 21 compatibility; at runtime SageTV's bundled versions work too
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.2'
+    implementation 'com.fasterxml.jackson.core:jackson-annotations:2.17.2'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+jar {
+    archiveBaseName = 'PlayOnPlugin'
+    // Do NOT include API stubs — they're provided by SageTV at runtime
+    from(sourceSets.main.output)
+    // Bundle Jackson in case SageTV's version is too old for Java 21
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes(
+            'Implementation-Title': 'PlayOn SageTV Plugin',
+            'Implementation-Version': archiveVersion,
+            'Plugin-Class': 'com.galeforcesage.playon.PlayOnPlugin'
+        )
+    }
+}
+
+tasks.register('copyToSageTV', Copy) {
+    description = 'Copy plugin JAR to a SageTV JARs directory (set -PsageTvDir=...)'
+    from jar
+    into "${findProperty('sageTvDir') ?: '/opt/sagetv/server'}/JARs"
+}
