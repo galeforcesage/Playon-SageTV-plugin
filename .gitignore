@@ -26,3 +26,7 @@ Thumbs.db
 # Plugin config (local)
 PlayonPlugin.properties
 PlayonDownloaded.txt
+
+# Legacy/unrelated source files
+src/main/java/sage/
+src/test/java/sage/
