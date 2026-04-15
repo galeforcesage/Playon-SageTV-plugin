@@ -1,6 +1,6 @@
 # PlayOn SageTV Plugin
 
-PlayOn Cloud DVR integration for SageTV V9.x — automatically downloads completed recordings from your PlayOn Cloud account into SageTV's media library with full metadata.
+PlayOn Cloud DVR integration for SageTV V9.x and [SageTV-mine](https://github.com/galeforcesage/SageTV-mine) — automatically downloads completed recordings from your PlayOn Cloud account into SageTV's media library with full metadata.
 
 Inspired by [Channels DVR's PlayOn integration](https://getchannels.com/playon/).
 
@@ -18,7 +18,7 @@ Inspired by [Channels DVR's PlayOn integration](https://getchannels.com/playon/)
 
 ## Requirements
 
-- SageTV V9.x (Java 21)
+- SageTV V9.x (Java 8+) or [SageTV-mine](https://github.com/galeforcesage/SageTV-mine) (Java 21)
 - PlayOn Cloud account ([playoncloud.com](https://www.playoncloud.com/))
 
 ## Installation

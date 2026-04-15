@@ -3,6 +3,7 @@ package com.galeforcesage.playon.sagetv;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -28,7 +29,7 @@ public class LibraryImporter {
      */
     public boolean ensureImportDirectory(String downloadDir) {
         try {
-            Path dir = Path.of(downloadDir);
+            Path dir = Paths.get(downloadDir);
             if (!Files.exists(dir)) {
                 Files.createDirectories(dir);
                 LOG.info("Created PlayOn download directory: " + dir);

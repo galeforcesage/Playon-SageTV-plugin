@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.FileInputStream;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -87,7 +88,7 @@ class MetadataProcessorTest {
 
     @Test
     void metadataPathStripsExtension() {
-        Path videoFile = Path.of("/some/dir/ShowName_S01E01.mp4");
+        Path videoFile = Paths.get("/some/dir/ShowName_S01E01.mp4");
         Path metaFile = MetadataProcessor.toMetadataPath(videoFile);
         assertEquals("ShowName_S01E01.properties", metaFile.getFileName().toString());
     }

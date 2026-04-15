@@ -8,6 +8,7 @@ import com.galeforcesage.playon.sagetv.MetadataProcessor;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.logging.Level;
@@ -39,7 +40,7 @@ public class SyncScheduler {
     private String lastSyncResult;
     private String nextSyncTime;
     private int totalDownloaded;
-    private List<PlayOnRecording> lastQueuedRecordings = List.of();
+    private List<PlayOnRecording> lastQueuedRecordings = Collections.emptyList();
 
     public SyncScheduler(PlayOnApiClient apiClient, ConfigManager config,
                          DownloadTracker tracker, MetadataProcessor metadataProcessor) {

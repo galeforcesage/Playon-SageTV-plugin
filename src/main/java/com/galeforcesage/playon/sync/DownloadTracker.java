@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
@@ -60,7 +61,7 @@ public class DownloadTracker {
     private void load() {
         if (Files.exists(trackingFile)) {
             try {
-                var lines = Files.readAllLines(trackingFile);
+                List<String> lines = Files.readAllLines(trackingFile);
                 for (String line : lines) {
                     String trimmed = line.trim();
                     if (!trimmed.isEmpty() && !trimmed.startsWith("#")) {

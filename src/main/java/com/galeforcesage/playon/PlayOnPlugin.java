@@ -167,22 +167,20 @@ public class PlayOnPlugin implements SageTVPlugin {
 
     @Override
     public String getConfigValue(String setting) {
-        return switch (setting) {
-            case CFG_EMAIL -> config.getCloudEmail();
-            case CFG_PASSWORD -> config.getCloudPassword().isEmpty() ? "" : "••••••••";
-            case CFG_SYNC_INTERVAL -> config.getSyncIntervalDisplay();
-            case CFG_DOWNLOAD_DIR -> config.getDownloadDirectory();
-            case CFG_REMOVE_FROM_CLOUD -> String.valueOf(config.isRemoveFromCloudAfterDownload());
-            case CFG_DEBUG_LOGGING -> String.valueOf(config.isDebugLogging());
-            case CFG_STATUS -> buildStatusText();
-            case CFG_ACCOUNT_INFO -> buildAccountInfoText();
-            case CFG_LINKED_SERVICES -> buildServicesText();
-            case CFG_QUEUED -> buildQueuedText();
-            case CFG_SYNC_NOW -> "Sync Now";
-            case CFG_RELOGIN -> "Re-Login";
-            case CFG_LOGOUT -> "Logout";
-            default -> "";
-        };
+        if (CFG_EMAIL.equals(setting)) return config.getCloudEmail();
+        if (CFG_PASSWORD.equals(setting)) return config.getCloudPassword().isEmpty() ? "" : "••••••••";
+        if (CFG_SYNC_INTERVAL.equals(setting)) return config.getSyncIntervalDisplay();
+        if (CFG_DOWNLOAD_DIR.equals(setting)) return config.getDownloadDirectory();
+        if (CFG_REMOVE_FROM_CLOUD.equals(setting)) return String.valueOf(config.isRemoveFromCloudAfterDownload());
+        if (CFG_DEBUG_LOGGING.equals(setting)) return String.valueOf(config.isDebugLogging());
+        if (CFG_STATUS.equals(setting)) return buildStatusText();
+        if (CFG_ACCOUNT_INFO.equals(setting)) return buildAccountInfoText();
+        if (CFG_LINKED_SERVICES.equals(setting)) return buildServicesText();
+        if (CFG_QUEUED.equals(setting)) return buildQueuedText();
+        if (CFG_SYNC_NOW.equals(setting)) return "Sync Now";
+        if (CFG_RELOGIN.equals(setting)) return "Re-Login";
+        if (CFG_LOGOUT.equals(setting)) return "Logout";
+        return "";
     }
 
     @Override
@@ -192,66 +190,55 @@ public class PlayOnPlugin implements SageTVPlugin {
 
     @Override
     public int getConfigType(String setting) {
-        return switch (setting) {
-            case CFG_EMAIL -> CONFIG_TEXT;
-            case CFG_PASSWORD -> CONFIG_PASSWORD;
-            case CFG_SYNC_INTERVAL -> CONFIG_CHOICE;
-            case CFG_DOWNLOAD_DIR -> CONFIG_DIRECTORY;
-            case CFG_REMOVE_FROM_CLOUD, CFG_DEBUG_LOGGING -> CONFIG_BOOL;
-            case CFG_SYNC_NOW, CFG_RELOGIN, CFG_LOGOUT -> CONFIG_BUTTON;
-            case CFG_STATUS, CFG_ACCOUNT_INFO, CFG_LINKED_SERVICES, CFG_QUEUED -> CONFIG_TEXT;
-            default -> CONFIG_TEXT;
-        };
+        if (CFG_EMAIL.equals(setting)) return CONFIG_TEXT;
+        if (CFG_PASSWORD.equals(setting)) return CONFIG_PASSWORD;
+        if (CFG_SYNC_INTERVAL.equals(setting)) return CONFIG_CHOICE;
+        if (CFG_DOWNLOAD_DIR.equals(setting)) return CONFIG_DIRECTORY;
+        if (CFG_REMOVE_FROM_CLOUD.equals(setting) || CFG_DEBUG_LOGGING.equals(setting)) return CONFIG_BOOL;
+        if (CFG_SYNC_NOW.equals(setting) || CFG_RELOGIN.equals(setting) || CFG_LOGOUT.equals(setting)) return CONFIG_BUTTON;
+        if (CFG_STATUS.equals(setting) || CFG_ACCOUNT_INFO.equals(setting) ||
+                CFG_LINKED_SERVICES.equals(setting) || CFG_QUEUED.equals(setting)) return CONFIG_TEXT;
+        return CONFIG_TEXT;
     }
 
     @Override
     public void setConfigValue(String setting, String value) {
-        switch (setting) {
-            case CFG_EMAIL -> {
-                config.setCloudEmail(value);
-                config.save();
+        if (CFG_EMAIL.equals(setting)) {
+            config.setCloudEmail(value);
+            config.save();
+        } else if (CFG_PASSWORD.equals(setting)) {
+            config.setCloudPassword(value);
+            config.save();
+        } else if (CFG_SYNC_INTERVAL.equals(setting)) {
+            config.setSyncIntervalMinutes(config.parseSyncIntervalOption(value));
+            config.save();
+            // Restart scheduler with new interval
+            if (syncScheduler != null) {
+                syncScheduler.stop();
+                syncScheduler.start();
             }
-            case CFG_PASSWORD -> {
-                config.setCloudPassword(value);
-                config.save();
+        } else if (CFG_DOWNLOAD_DIR.equals(setting)) {
+            config.setDownloadDirectory(value);
+            config.save();
+            libraryImporter.ensureImportDirectory(value);
+        } else if (CFG_REMOVE_FROM_CLOUD.equals(setting)) {
+            config.setRemoveFromCloudAfterDownload(Boolean.parseBoolean(value));
+            config.save();
+        } else if (CFG_DEBUG_LOGGING.equals(setting)) {
+            config.setDebugLogging(Boolean.parseBoolean(value));
+            config.save();
+        } else if (CFG_SYNC_NOW.equals(setting)) {
+            if (syncScheduler != null) {
+                syncScheduler.syncNow();
             }
-            case CFG_SYNC_INTERVAL -> {
-                config.setSyncIntervalMinutes(config.parseSyncIntervalOption(value));
-                config.save();
-                // Restart scheduler with new interval
-                if (syncScheduler != null) {
-                    syncScheduler.stop();
-                    syncScheduler.start();
-                }
-            }
-            case CFG_DOWNLOAD_DIR -> {
-                config.setDownloadDirectory(value);
-                config.save();
-                libraryImporter.ensureImportDirectory(value);
-            }
-            case CFG_REMOVE_FROM_CLOUD -> {
-                config.setRemoveFromCloudAfterDownload(Boolean.parseBoolean(value));
-                config.save();
-            }
-            case CFG_DEBUG_LOGGING -> {
-                config.setDebugLogging(Boolean.parseBoolean(value));
-                config.save();
-            }
-            case CFG_SYNC_NOW -> {
-                if (syncScheduler != null) {
-                    syncScheduler.syncNow();
-                }
-            }
-            case CFG_RELOGIN -> {
-                performLogin();
-            }
-            case CFG_LOGOUT -> {
-                apiClient.logout();
-                config.setAuthStatus("Not connected");
-                if (syncScheduler != null) {
-                    syncScheduler.stop();
-                    syncScheduler = null;
-                }
+        } else if (CFG_RELOGIN.equals(setting)) {
+            performLogin();
+        } else if (CFG_LOGOUT.equals(setting)) {
+            apiClient.logout();
+            config.setAuthStatus("Not connected");
+            if (syncScheduler != null) {
+                syncScheduler.stop();
+                syncScheduler = null;
             }
         }
     }
@@ -273,42 +260,38 @@ public class PlayOnPlugin implements SageTVPlugin {
 
     @Override
     public String getConfigHelpText(String setting) {
-        return switch (setting) {
-            case CFG_EMAIL -> "Email address for your PlayOn Cloud account.";
-            case CFG_PASSWORD -> "Password for your PlayOn Cloud account. Stored encrypted.";
-            case CFG_SYNC_INTERVAL -> "How often to check for new cloud recordings (default: 2 hours, matching Channels DVR).";
-            case CFG_DOWNLOAD_DIR -> "Directory where recordings are saved. Must be in SageTV's Video Import paths.";
-            case CFG_REMOVE_FROM_CLOUD -> "Mark recordings as downloaded in PlayOn Cloud after successful download.";
-            case CFG_DEBUG_LOGGING -> "Enable verbose debug logging for troubleshooting.";
-            case CFG_SYNC_NOW -> "Trigger an immediate check for new recordings.";
-            case CFG_STATUS -> "Current plugin status and sync information.";
-            case CFG_ACCOUNT_INFO -> "PlayOn Cloud account details (plan, credits).";
-            case CFG_LINKED_SERVICES -> "Streaming services linked to your PlayOn account.";
-            case CFG_QUEUED -> "Recordings currently queued or in-progress in PlayOn Cloud.";
-            case CFG_RELOGIN -> "Re-authenticate with PlayOn Cloud using saved credentials.";
-            case CFG_LOGOUT -> "Disconnect from PlayOn Cloud and stop syncing.";
-            default -> "";
-        };
+        if (CFG_EMAIL.equals(setting)) return "Email address for your PlayOn Cloud account.";
+        if (CFG_PASSWORD.equals(setting)) return "Password for your PlayOn Cloud account. Stored encrypted.";
+        if (CFG_SYNC_INTERVAL.equals(setting)) return "How often to check for new cloud recordings (default: 2 hours, matching Channels DVR).";
+        if (CFG_DOWNLOAD_DIR.equals(setting)) return "Directory where recordings are saved. Must be in SageTV's Video Import paths.";
+        if (CFG_REMOVE_FROM_CLOUD.equals(setting)) return "Mark recordings as downloaded in PlayOn Cloud after successful download.";
+        if (CFG_DEBUG_LOGGING.equals(setting)) return "Enable verbose debug logging for troubleshooting.";
+        if (CFG_SYNC_NOW.equals(setting)) return "Trigger an immediate check for new recordings.";
+        if (CFG_STATUS.equals(setting)) return "Current plugin status and sync information.";
+        if (CFG_ACCOUNT_INFO.equals(setting)) return "PlayOn Cloud account details (plan, credits).";
+        if (CFG_LINKED_SERVICES.equals(setting)) return "Streaming services linked to your PlayOn account.";
+        if (CFG_QUEUED.equals(setting)) return "Recordings currently queued or in-progress in PlayOn Cloud.";
+        if (CFG_RELOGIN.equals(setting)) return "Re-authenticate with PlayOn Cloud using saved credentials.";
+        if (CFG_LOGOUT.equals(setting)) return "Disconnect from PlayOn Cloud and stop syncing.";
+        return "";
     }
 
     @Override
     public String getConfigLabel(String setting) {
-        return switch (setting) {
-            case CFG_EMAIL -> "Cloud Email";
-            case CFG_PASSWORD -> "Cloud Password";
-            case CFG_SYNC_INTERVAL -> "Sync Interval";
-            case CFG_DOWNLOAD_DIR -> "Download Directory";
-            case CFG_REMOVE_FROM_CLOUD -> "Remove from Cloud After Download";
-            case CFG_DEBUG_LOGGING -> "Debug Logging";
-            case CFG_SYNC_NOW -> "Sync Now";
-            case CFG_STATUS -> "Status";
-            case CFG_ACCOUNT_INFO -> "Account Info";
-            case CFG_LINKED_SERVICES -> "Linked Services";
-            case CFG_QUEUED -> "Queued Recordings";
-            case CFG_RELOGIN -> "Re-Login";
-            case CFG_LOGOUT -> "Logout";
-            default -> setting;
-        };
+        if (CFG_EMAIL.equals(setting)) return "Cloud Email";
+        if (CFG_PASSWORD.equals(setting)) return "Cloud Password";
+        if (CFG_SYNC_INTERVAL.equals(setting)) return "Sync Interval";
+        if (CFG_DOWNLOAD_DIR.equals(setting)) return "Download Directory";
+        if (CFG_REMOVE_FROM_CLOUD.equals(setting)) return "Remove from Cloud After Download";
+        if (CFG_DEBUG_LOGGING.equals(setting)) return "Debug Logging";
+        if (CFG_SYNC_NOW.equals(setting)) return "Sync Now";
+        if (CFG_STATUS.equals(setting)) return "Status";
+        if (CFG_ACCOUNT_INFO.equals(setting)) return "Account Info";
+        if (CFG_LINKED_SERVICES.equals(setting)) return "Linked Services";
+        if (CFG_QUEUED.equals(setting)) return "Queued Recordings";
+        if (CFG_RELOGIN.equals(setting)) return "Re-Login";
+        if (CFG_LOGOUT.equals(setting)) return "Logout";
+        return setting;
     }
 
     @Override

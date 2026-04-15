@@ -4,7 +4,8 @@
   <Identifier>PlayOnIntegrationPlugin</Identifier>
   <Description>
     Automatically downloads completed recordings from your PlayOn Cloud account
-    into SageTV's media library with full metadata mapping. Similar to Channels DVR's
+    into SageTV's media library with full metadata mapping. Compatible with
+    SageTV V9.x (Java 8) and SageTV-mine (Java 21). Similar to Channels DVR's
     PlayOn integration — poll for completed cloud recordings, download MP4 files,
     and import them with proper series/episode/movie metadata.
   </Description>

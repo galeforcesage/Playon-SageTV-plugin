@@ -7,16 +7,14 @@ import com.galeforcesage.playon.api.models.PlayOnAccount;
 import com.galeforcesage.playon.api.models.PlayOnRecording;
 import com.galeforcesage.playon.api.models.PlayOnService;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.time.Duration;
+import java.nio.file.StandardOpenOption;
 import java.util.Collections;
 import java.util.List;
 import java.util.logging.Level;
@@ -30,16 +28,18 @@ import java.util.logging.Logger;
  * features(), and mark-as-downloaded.
  * <p>
  * All API calls use HTTPS with JWT authorization.
+ * Uses HttpURLConnection for Java 8 compatibility.
  */
 public class PlayOnApiClient {
 
     private static final Logger LOG = Logger.getLogger(PlayOnApiClient.class.getName());
     private static final String DEFAULT_API_BASE = "https://api.playonrecorder.com/v3";
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
-    private static final Duration DOWNLOAD_TIMEOUT = Duration.ofHours(4);
+    private static final int CONNECT_TIMEOUT_MS = 30_000;
+    private static final int READ_TIMEOUT_MS = 60_000;
+    private static final int DOWNLOAD_TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 hours
     private static final String USER_AGENT = "PlayOnSageTVPlugin/1.0";
+    private static final int BUFFER_SIZE = 8192;
 
-    private final HttpClient httpClient;
     private final ObjectMapper mapper;
     private final PlayOnAuth auth;
     private final String apiBase;
@@ -54,29 +54,18 @@ public class PlayOnApiClient {
 
     public PlayOnApiClient(String apiBase) {
         this.apiBase = apiBase;
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(30))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
         this.mapper = new ObjectMapper();
-        this.auth = new PlayOnAuth(httpClient, mapper, apiBase);
+        this.auth = new PlayOnAuth(mapper, apiBase);
     }
 
     // ==================== Authentication ====================
 
-    /**
-     * Login with PlayOn Cloud credentials.
-     * Stores credentials for automatic re-authentication on token expiry.
-     */
     public boolean login(String email, String password) {
         this.storedEmail = email;
         this.storedPassword = password;
         return auth.login(email, password);
     }
 
-    /**
-     * Check if authenticated and re-login if token is expired or expiring.
-     */
     public boolean ensureAuthenticated() {
         if (auth.isAuthenticated() && !auth.isTokenExpiring()) {
             return true;
@@ -104,25 +93,14 @@ public class PlayOnApiClient {
 
     // ==================== Recordings API ====================
 
-    /**
-     * List completed (available) recordings.
-     * Equivalent to Python API's available() method.
-     */
     public List<PlayOnRecording> available() {
         return fetchRecordingList("/recordings/available");
     }
 
-    /**
-     * Alias for available() — list all available recordings.
-     */
     public List<PlayOnRecording> recordings() {
         return available();
     }
 
-    /**
-     * List queued/in-progress recordings.
-     * Equivalent to Python API's queue() method.
-     */
     public List<PlayOnRecording> queue() {
         return fetchRecordingList("/recordings/queue");
     }
@@ -131,10 +109,9 @@ public class PlayOnApiClient {
         if (!ensureAuthenticated()) return Collections.emptyList();
 
         try {
-            HttpResponse<String> response = authenticatedGet(apiBase + endpoint);
-
-            if (response.statusCode() == 200) {
-                JsonNode root = mapper.readTree(response.body());
+            String responseBody = authenticatedGet(apiBase + endpoint);
+            if (responseBody != null) {
+                JsonNode root = mapper.readTree(responseBody);
                 JsonNode items;
                 if (root.isArray()) {
                     items = root;
@@ -151,15 +128,9 @@ public class PlayOnApiClient {
                         items.traverse(), new TypeReference<List<PlayOnRecording>>() {});
                 LOG.info("Retrieved " + recordings.size() + " recordings from " + endpoint);
                 return recordings;
-            } else if (response.statusCode() == 401) {
-                LOG.warning("Auth expired on " + endpoint + ", will re-auth next cycle");
-                auth.logout();
-            } else {
-                LOG.warning("Failed to fetch " + endpoint + ": HTTP " + response.statusCode());
             }
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException e) {
             LOG.log(Level.SEVERE, "Failed to fetch " + endpoint, e);
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
         }
 
         return Collections.emptyList();
@@ -167,76 +138,69 @@ public class PlayOnApiClient {
 
     // ==================== Download ====================
 
-    /**
-     * Download a recording to the specified output path.
-     * Streams directly to disk without buffering in memory.
-     * Supports resume via HTTP Range headers.
-     *
-     * @param downloadId the recording's download_id
-     * @param outputPath the target file path
-     * @return true if download was successful
-     */
     public boolean download(long downloadId, Path outputPath) {
         return download(downloadId, null, outputPath);
     }
 
-    /**
-     * Download a recording with optional filename override.
-     */
     public boolean download(long downloadId, String filename, Path outputPath) {
         if (!ensureAuthenticated()) return false;
 
         Path tempFile = outputPath.resolveSibling(outputPath.getFileName() + ".part");
 
         try {
-            // Check for existing partial download (resume support)
             long existingBytes = 0;
             if (Files.exists(tempFile)) {
                 existingBytes = Files.size(tempFile);
                 LOG.info("Resuming download from byte " + existingBytes);
             }
 
-            var requestBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(apiBase + "/recordings/" + downloadId + "/download"))
-                    .header("Authorization", "Bearer " + auth.getJwt())
-                    .header("User-Agent", USER_AGENT)
-                    .timeout(DOWNLOAD_TIMEOUT)
-                    .GET();
+            HttpURLConnection conn = openConnection(
+                    apiBase + "/recordings/" + downloadId + "/download");
+            conn.setRequestProperty("Authorization", "Bearer " + auth.getJwt());
+            conn.setReadTimeout(DOWNLOAD_TIMEOUT_MS);
+            conn.setInstanceFollowRedirects(true);
 
             if (existingBytes > 0) {
-                requestBuilder.header("Range", "bytes=" + existingBytes + "-");
+                conn.setRequestProperty("Range", "bytes=" + existingBytes + "-");
             }
 
-            HttpResponse<InputStream> response = httpClient.send(requestBuilder.build(),
-                    HttpResponse.BodyHandlers.ofInputStream());
+            int status = conn.getResponseCode();
 
-            if (response.statusCode() == 200 || response.statusCode() == 206) {
-                try (InputStream in = response.body();
-                     var out = Files.newOutputStream(tempFile,
-                             existingBytes > 0 ?
-                                     new java.nio.file.OpenOption[]{java.nio.file.StandardOpenOption.APPEND} :
-                                     new java.nio.file.OpenOption[]{java.nio.file.StandardOpenOption.CREATE,
-                                             java.nio.file.StandardOpenOption.TRUNCATE_EXISTING})) {
-                    in.transferTo(out);
+            // Handle redirects manually if needed
+            if (status == 301 || status == 302) {
+                String redirectUrl = conn.getHeaderField("Location");
+                conn.disconnect();
+                if (redirectUrl != null) {
+                    return downloadFromUrl(redirectUrl, tempFile, outputPath, existingBytes);
+                }
+                return false;
+            }
+
+            if (status == 200 || status == 206) {
+                OutputStream out;
+                if (existingBytes > 0) {
+                    out = Files.newOutputStream(tempFile, StandardOpenOption.APPEND);
+                } else {
+                    out = Files.newOutputStream(tempFile,
+                            StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+                }
+                try {
+                    copyStream(conn.getInputStream(), out);
+                } finally {
+                    out.close();
+                    conn.disconnect();
                 }
 
-                // Move temp file to final destination
                 Files.move(tempFile, outputPath, StandardCopyOption.REPLACE_EXISTING);
                 LOG.info("Downloaded: " + outputPath +
                         " (" + Files.size(outputPath) / 1_048_576 + " MB)");
                 return true;
-            } else if (response.statusCode() == 302 || response.statusCode() == 301) {
-                // Handle redirect to actual download URL
-                String redirectUrl = response.headers().firstValue("Location").orElse(null);
-                if (redirectUrl != null) {
-                    return downloadFromUrl(redirectUrl, tempFile, outputPath, existingBytes);
-                }
             } else {
-                LOG.warning("Download failed: HTTP " + response.statusCode());
+                LOG.warning("Download failed: HTTP " + status);
+                conn.disconnect();
             }
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException e) {
             LOG.log(Level.SEVERE, "Download failed for download_id " + downloadId, e);
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
         }
 
         return false;
@@ -244,126 +208,109 @@ public class PlayOnApiClient {
 
     private boolean downloadFromUrl(String url, Path tempFile, Path outputPath, long existingBytes) {
         try {
-            var requestBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("User-Agent", USER_AGENT)
-                    .timeout(DOWNLOAD_TIMEOUT)
-                    .GET();
+            HttpURLConnection conn = openConnection(url);
+            conn.setReadTimeout(DOWNLOAD_TIMEOUT_MS);
 
             if (existingBytes > 0) {
-                requestBuilder.header("Range", "bytes=" + existingBytes + "-");
+                conn.setRequestProperty("Range", "bytes=" + existingBytes + "-");
             }
 
-            HttpResponse<InputStream> response = httpClient.send(requestBuilder.build(),
-                    HttpResponse.BodyHandlers.ofInputStream());
-
-            if (response.statusCode() == 200 || response.statusCode() == 206) {
-                try (InputStream in = response.body();
-                     var out = Files.newOutputStream(tempFile,
-                             existingBytes > 0 ?
-                                     new java.nio.file.OpenOption[]{java.nio.file.StandardOpenOption.APPEND} :
-                                     new java.nio.file.OpenOption[]{java.nio.file.StandardOpenOption.CREATE,
-                                             java.nio.file.StandardOpenOption.TRUNCATE_EXISTING})) {
-                    in.transferTo(out);
+            int status = conn.getResponseCode();
+            if (status == 200 || status == 206) {
+                OutputStream out;
+                if (existingBytes > 0) {
+                    out = Files.newOutputStream(tempFile, StandardOpenOption.APPEND);
+                } else {
+                    out = Files.newOutputStream(tempFile,
+                            StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+                }
+                try {
+                    copyStream(conn.getInputStream(), out);
+                } finally {
+                    out.close();
+                    conn.disconnect();
                 }
                 Files.move(tempFile, outputPath, StandardCopyOption.REPLACE_EXISTING);
                 return true;
             }
-        } catch (IOException | InterruptedException e) {
+            conn.disconnect();
+        } catch (IOException e) {
             LOG.log(Level.SEVERE, "Download from redirect URL failed", e);
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
         }
         return false;
     }
 
     // ==================== Mark as Downloaded ====================
 
-    /**
-     * Mark a recording as downloaded (no longer pending in cloud).
-     */
     public boolean markAsDownloaded(long recordingId) {
         if (!ensureAuthenticated()) return false;
 
         try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(apiBase + "/recordings/" + recordingId + "/downloaded"))
-                    .header("Authorization", "Bearer " + auth.getJwt())
-                    .header("User-Agent", USER_AGENT)
-                    .timeout(REQUEST_TIMEOUT)
-                    .POST(HttpRequest.BodyPublishers.noBody())
-                    .build();
+            HttpURLConnection conn = openConnection(
+                    apiBase + "/recordings/" + recordingId + "/downloaded");
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Authorization", "Bearer " + auth.getJwt());
+            conn.setRequestProperty("Content-Length", "0");
 
-            HttpResponse<String> response = httpClient.send(request,
-                    HttpResponse.BodyHandlers.ofString());
+            int status = conn.getResponseCode();
+            conn.disconnect();
 
-            boolean success = response.statusCode() >= 200 && response.statusCode() < 300;
+            boolean success = status >= 200 && status < 300;
             if (success) {
                 LOG.info("Marked recording " + recordingId + " as downloaded");
             }
             return success;
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException e) {
             LOG.log(Level.WARNING, "Failed to mark recording " + recordingId + " as downloaded", e);
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             return false;
         }
     }
 
     // ==================== Services ====================
 
-    /**
-     * List available streaming services linked to the account.
-     */
     public List<PlayOnService> services() {
         if (!ensureAuthenticated()) return Collections.emptyList();
 
         try {
-            HttpResponse<String> response = authenticatedGet(apiBase + "/services");
-            if (response.statusCode() == 200) {
-                JsonNode root = mapper.readTree(response.body());
+            String responseBody = authenticatedGet(apiBase + "/services");
+            if (responseBody != null) {
+                JsonNode root = mapper.readTree(responseBody);
                 JsonNode items = root.isArray() ? root :
                         root.has("services") ? root.get("services") : root;
                 return mapper.readValue(items.traverse(),
                         new TypeReference<List<PlayOnService>>() {});
             }
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException e) {
             LOG.log(Level.WARNING, "Failed to fetch services", e);
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
         }
         return Collections.emptyList();
     }
 
     // ==================== Account ====================
 
-    /**
-     * Get account information (plan, credits, storage).
-     */
     public PlayOnAccount account() {
         if (!ensureAuthenticated()) return null;
 
         try {
-            HttpResponse<String> response = authenticatedGet(apiBase + "/account");
-            if (response.statusCode() == 200) {
-                return mapper.readValue(response.body(), PlayOnAccount.class);
+            String responseBody = authenticatedGet(apiBase + "/account");
+            if (responseBody != null) {
+                return mapper.readValue(responseBody, PlayOnAccount.class);
             }
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException e) {
             LOG.log(Level.WARNING, "Failed to fetch account info", e);
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
         }
         return null;
     }
 
     // ==================== Notifications ====================
 
-    /**
-     * Get notifications/alerts (failed recordings, auth issues, etc.).
-     */
     public List<String> notifications() {
         if (!ensureAuthenticated()) return Collections.emptyList();
 
         try {
-            HttpResponse<String> response = authenticatedGet(apiBase + "/notifications");
-            if (response.statusCode() == 200) {
-                JsonNode root = mapper.readTree(response.body());
+            String responseBody = authenticatedGet(apiBase + "/notifications");
+            if (responseBody != null) {
+                JsonNode root = mapper.readTree(responseBody);
                 JsonNode items = root.isArray() ? root :
                         root.has("notifications") ? root.get("notifications") : root;
                 return mapper.readValue(items.traverse(),
@@ -377,18 +324,15 @@ public class PlayOnApiClient {
 
     // ==================== Featured Content ====================
 
-    /**
-     * Get the image URL for a featured show (for cover art).
-     */
     public String featuredImageUrl(String featureName) {
         if (!ensureAuthenticated()) return null;
 
         try {
-            String encodedName = java.net.URLEncoder.encode(featureName, "UTF-8");
-            HttpResponse<String> response = authenticatedGet(
+            String encodedName = URLEncoder.encode(featureName, "UTF-8");
+            String responseBody = authenticatedGet(
                     apiBase + "/features/" + encodedName + "/image");
-            if (response.statusCode() == 200) {
-                JsonNode json = mapper.readTree(response.body());
+            if (responseBody != null) {
+                JsonNode json = mapper.readTree(responseBody);
                 if (json.has("url")) return json.get("url").asText();
                 if (json.has("image_url")) return json.get("image_url").asText();
             }
@@ -398,43 +342,77 @@ public class PlayOnApiClient {
         return null;
     }
 
-    /**
-     * Download an image (cover art/thumbnail) to a local file.
-     *
-     * @return true if the image was downloaded
-     */
     public boolean downloadImage(String imageUrl, Path outputPath) {
         if (imageUrl == null || imageUrl.isEmpty()) return false;
 
         try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(imageUrl))
-                    .header("User-Agent", USER_AGENT)
-                    .timeout(Duration.ofSeconds(30))
-                    .GET()
-                    .build();
+            HttpURLConnection conn = openConnection(imageUrl);
+            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(30_000);
 
-            HttpResponse<Path> response = httpClient.send(request,
-                    HttpResponse.BodyHandlers.ofFile(outputPath));
-            return response.statusCode() == 200;
+            int status = conn.getResponseCode();
+            if (status == 200) {
+                try (InputStream in = conn.getInputStream();
+                     OutputStream out = Files.newOutputStream(outputPath)) {
+                    copyStream(in, out);
+                }
+                conn.disconnect();
+                return true;
+            }
+            conn.disconnect();
         } catch (Exception e) {
             LOG.log(Level.FINE, "Failed to download image: " + imageUrl, e);
-            return false;
         }
+        return false;
     }
 
     // ==================== Helpers ====================
 
-    private HttpResponse<String> authenticatedGet(String url)
-            throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("Authorization", "Bearer " + auth.getJwt())
-                .header("User-Agent", USER_AGENT)
-                .timeout(REQUEST_TIMEOUT)
-                .GET()
-                .build();
+    /**
+     * Perform an authenticated GET request and return the response body, or null on failure.
+     */
+    private String authenticatedGet(String url) throws IOException {
+        HttpURLConnection conn = openConnection(url);
+        conn.setRequestProperty("Authorization", "Bearer " + auth.getJwt());
 
-        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        int status = conn.getResponseCode();
+        if (status == 200) {
+            String body = readResponseBody(conn);
+            conn.disconnect();
+            return body;
+        } else if (status == 401) {
+            LOG.warning("Auth expired, will re-auth next cycle");
+            auth.logout();
+            conn.disconnect();
+        } else {
+            LOG.warning("Request failed: HTTP " + status + " for " + url);
+            conn.disconnect();
+        }
+        return null;
+    }
+
+    private HttpURLConnection openConnection(String url) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setRequestProperty("User-Agent", USER_AGENT);
+        conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+        conn.setReadTimeout(READ_TIMEOUT_MS);
+        conn.setInstanceFollowRedirects(true);
+        return conn;
+    }
+
+    private String readResponseBody(HttpURLConnection conn) throws IOException {
+        try (InputStream in = conn.getInputStream();
+             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            copyStream(in, baos);
+            return baos.toString("UTF-8");
+        }
+    }
+
+    private static void copyStream(InputStream in, OutputStream out) throws IOException {
+        byte[] buffer = new byte[BUFFER_SIZE];
+        int bytesRead;
+        while ((bytesRead = in.read(buffer)) != -1) {
+            out.write(buffer, 0, bytesRead);
+        }
     }
 }

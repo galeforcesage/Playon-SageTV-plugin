@@ -34,7 +34,7 @@ public class ConfigManager {
 
     public ConfigManager() {
         String sageDir = System.getProperty("user.dir", ".");
-        this.configPath = Path.of(sageDir, CONFIG_FILE);
+        this.configPath = Paths.get(sageDir, CONFIG_FILE);
         this.encryptionKey = deriveEncryptionKey();
         load();
     }
@@ -176,7 +176,7 @@ public class ConfigManager {
 
     private String getDefaultDownloadDirectory() {
         String sageDir = System.getProperty("user.dir", ".");
-        return Path.of(sageDir, DEFAULT_DOWNLOAD_SUBDIR).toString();
+        return Paths.get(sageDir, DEFAULT_DOWNLOAD_SUBDIR).toString();
     }
 
     public String getSyncIntervalDisplay() {
@@ -193,15 +193,13 @@ public class ConfigManager {
     }
 
     public long parseSyncIntervalOption(String option) {
-        return switch (option) {
-            case "30 minutes" -> 30;
-            case "1 hour" -> 60;
-            case "2 hours" -> 120;
-            case "6 hours" -> 360;
-            case "12 hours" -> 720;
-            case "24 hours" -> 1440;
-            default -> DEFAULT_SYNC_INTERVAL_MINUTES;
-        };
+        if ("30 minutes".equals(option)) return 30;
+        if ("1 hour".equals(option)) return 60;
+        if ("2 hours".equals(option)) return 120;
+        if ("6 hours".equals(option)) return 360;
+        if ("12 hours".equals(option)) return 720;
+        if ("24 hours".equals(option)) return 1440;
+        return DEFAULT_SYNC_INTERVAL_MINUTES;
     }
 
     // ==================== Encryption ====================

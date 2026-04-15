@@ -2,13 +2,11 @@ package com.galeforcesage.playon.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -18,13 +16,14 @@ import java.util.logging.Logger;
  * The PlayOn API uses email/password login returning a JWT token with a
  * login_expiry (UNIX timestamp). This class handles login, token storage,
  * expiry tracking, and automatic re-authentication.
+ * Uses HttpURLConnection for Java 8 compatibility.
  */
 public class PlayOnAuth {
 
     private static final Logger LOG = Logger.getLogger(PlayOnAuth.class.getName());
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
+    private static final int CONNECT_TIMEOUT_MS = 30_000;
+    private static final int READ_TIMEOUT_MS = 30_000;
 
-    private final HttpClient httpClient;
     private final ObjectMapper mapper;
     private final String apiBase;
 
@@ -33,8 +32,7 @@ public class PlayOnAuth {
     private long loginExpiry; // UNIX timestamp (seconds)
     private String authenticatedEmail;
 
-    public PlayOnAuth(HttpClient httpClient, ObjectMapper mapper, String apiBase) {
-        this.httpClient = httpClient;
+    public PlayOnAuth(ObjectMapper mapper, String apiBase) {
         this.mapper = mapper;
         this.apiBase = apiBase;
     }
@@ -45,24 +43,29 @@ public class PlayOnAuth {
      * @return true if authentication was successful
      */
     public boolean login(String email, String password) {
+        HttpURLConnection conn = null;
         try {
-            var body = mapper.createObjectNode();
+            ObjectNode body = mapper.createObjectNode();
             body.put("email", email);
             body.put("password", password);
+            String jsonBody = mapper.writeValueAsString(body);
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(apiBase + "/login"))
-                    .header("Content-Type", "application/json")
-                    .header("User-Agent", "PlayOnSageTVPlugin/1.0")
-                    .timeout(REQUEST_TIMEOUT)
-                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)))
-                    .build();
+            conn = (HttpURLConnection) new URL(apiBase + "/login").openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("User-Agent", "PlayOnSageTVPlugin/1.0");
+            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(READ_TIMEOUT_MS);
+            conn.setDoOutput(true);
 
-            HttpResponse<String> response = httpClient.send(request,
-                    HttpResponse.BodyHandlers.ofString());
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(jsonBody.getBytes("UTF-8"));
+            }
 
-            if (response.statusCode() == 200) {
-                JsonNode json = mapper.readTree(response.body());
+            int status = conn.getResponseCode();
+            if (status == 200) {
+                String responseBody = readResponse(conn);
+                JsonNode json = mapper.readTree(responseBody);
 
                 // Extract JWT and auth_token
                 this.jwt = extractString(json, "jwt");
@@ -87,54 +90,37 @@ public class PlayOnAuth {
                         " (expires at " + loginExpiry + ")");
                 return this.jwt != null;
             } else {
-                LOG.warning("PlayOn Cloud login failed: HTTP " + response.statusCode());
+                LOG.warning("PlayOn Cloud login failed: HTTP " + status);
                 return false;
             }
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException e) {
             LOG.log(Level.SEVERE, "PlayOn Cloud login failed", e);
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             return false;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
 
-    /**
-     * Returns true if we have a valid, non-expired JWT.
-     */
     public boolean isAuthenticated() {
         return jwt != null && (System.currentTimeMillis() / 1000) < loginExpiry;
     }
 
-    /**
-     * Returns true if the token is within 5 minutes of expiry.
-     */
     public boolean isTokenExpiring() {
         return jwt != null && (loginExpiry - System.currentTimeMillis() / 1000) < 300;
     }
 
-    /**
-     * Get the JWT for Authorization headers.
-     */
     public String getJwt() {
         return jwt;
     }
 
-    /**
-     * Get the authenticated email address.
-     */
     public String getAuthenticatedEmail() {
         return authenticatedEmail;
     }
 
-    /**
-     * Get the token expiry as a UNIX timestamp (seconds).
-     */
     public long getLoginExpiry() {
         return loginExpiry;
     }
 
-    /**
-     * Clear authentication state (logout).
-     */
     public void logout() {
         this.jwt = null;
         this.authToken = null;
@@ -148,5 +134,17 @@ public class PlayOnAuth {
             return json.get(field).asText();
         }
         return null;
+    }
+
+    private String readResponse(HttpURLConnection conn) throws IOException {
+        try (InputStream in = conn.getInputStream();
+             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = in.read(buffer)) != -1) {
+                baos.write(buffer, 0, bytesRead);
+            }
+            return baos.toString("UTF-8");
+        }
     }
 }

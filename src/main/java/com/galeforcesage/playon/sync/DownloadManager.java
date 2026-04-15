@@ -7,6 +7,7 @@ import com.galeforcesage.playon.sagetv.ConfigManager;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -42,7 +43,7 @@ public class DownloadManager {
     public Path downloadRecording(PlayOnRecording recording) {
         if (cancelled) return null;
 
-        Path downloadDir = Path.of(config.getDownloadDirectory());
+        Path downloadDir = Paths.get(config.getDownloadDirectory());
         Path subDir = downloadDir.resolve(recording.toSubdirectoryPath());
         Path targetFile = subDir.resolve(recording.toFilename());
 
