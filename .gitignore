@@ -24,7 +24,9 @@ out/
 Thumbs.db
 
 # Plugin config (local)
+PlayOnPlugin.properties
 PlayonPlugin.properties
+PlayOnDownloaded.txt
 PlayonDownloaded.txt
 
 # Legacy/unrelated source files

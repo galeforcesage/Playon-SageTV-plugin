@@ -5,7 +5,6 @@ import sage.SageTVPluginRegistry;
 import com.galeforcesage.playon.api.PlayOnApiClient;
 import com.galeforcesage.playon.api.models.PlayOnAccount;
 import com.galeforcesage.playon.api.models.PlayOnRecording;
-import com.galeforcesage.playon.api.models.PlayOnService;
 import com.galeforcesage.playon.sagetv.ConfigManager;
 import com.galeforcesage.playon.sagetv.LibraryImporter;
 import com.galeforcesage.playon.sagetv.MetadataProcessor;
@@ -141,7 +140,6 @@ public class PlayOnPlugin implements SageTVPlugin {
     private static final String CFG_SYNC_NOW = "PlayOnSyncNow";
     private static final String CFG_STATUS = "PlayOnStatus";
     private static final String CFG_ACCOUNT_INFO = "PlayOnAccountInfo";
-    private static final String CFG_LINKED_SERVICES = "PlayOnLinkedServices";
     private static final String CFG_QUEUED = "PlayOnQueued";
     private static final String CFG_RELOGIN = "PlayOnReLogin";
     private static final String CFG_LOGOUT = "PlayOnLogout";
@@ -159,7 +157,6 @@ public class PlayOnPlugin implements SageTVPlugin {
             CFG_REMOVE_FROM_CLOUD,
             CFG_SYNC_NOW,
             CFG_ACCOUNT_INFO,
-            CFG_LINKED_SERVICES,
             CFG_QUEUED,
             CFG_DEBUG_LOGGING
         };
@@ -175,7 +172,6 @@ public class PlayOnPlugin implements SageTVPlugin {
         if (CFG_DEBUG_LOGGING.equals(setting)) return String.valueOf(config.isDebugLogging());
         if (CFG_STATUS.equals(setting)) return buildStatusText();
         if (CFG_ACCOUNT_INFO.equals(setting)) return buildAccountInfoText();
-        if (CFG_LINKED_SERVICES.equals(setting)) return buildServicesText();
         if (CFG_QUEUED.equals(setting)) return buildQueuedText();
         if (CFG_SYNC_NOW.equals(setting)) return "Sync Now";
         if (CFG_RELOGIN.equals(setting)) return "Re-Login";
@@ -197,7 +193,7 @@ public class PlayOnPlugin implements SageTVPlugin {
         if (CFG_REMOVE_FROM_CLOUD.equals(setting) || CFG_DEBUG_LOGGING.equals(setting)) return CONFIG_BOOL;
         if (CFG_SYNC_NOW.equals(setting) || CFG_RELOGIN.equals(setting) || CFG_LOGOUT.equals(setting)) return CONFIG_BUTTON;
         if (CFG_STATUS.equals(setting) || CFG_ACCOUNT_INFO.equals(setting) ||
-                CFG_LINKED_SERVICES.equals(setting) || CFG_QUEUED.equals(setting)) return CONFIG_TEXT;
+                CFG_QUEUED.equals(setting)) return CONFIG_BUTTON;
         return CONFIG_TEXT;
     }
 
@@ -268,9 +264,8 @@ public class PlayOnPlugin implements SageTVPlugin {
         if (CFG_DEBUG_LOGGING.equals(setting)) return "Enable verbose debug logging for troubleshooting.";
         if (CFG_SYNC_NOW.equals(setting)) return "Trigger an immediate check for new recordings.";
         if (CFG_STATUS.equals(setting)) return "Current plugin status and sync information.";
-        if (CFG_ACCOUNT_INFO.equals(setting)) return "PlayOn Cloud account details (plan, credits).";
-        if (CFG_LINKED_SERVICES.equals(setting)) return "Streaming services linked to your PlayOn account.";
-        if (CFG_QUEUED.equals(setting)) return "Recordings currently queued or in-progress in PlayOn Cloud.";
+        if (CFG_ACCOUNT_INFO.equals(setting)) return buildAccountInfoHelp();
+        if (CFG_QUEUED.equals(setting)) return buildQueuedHelp();
         if (CFG_RELOGIN.equals(setting)) return "Re-authenticate with PlayOn Cloud using saved credentials.";
         if (CFG_LOGOUT.equals(setting)) return "Disconnect from PlayOn Cloud and stop syncing.";
         return "";
@@ -287,7 +282,6 @@ public class PlayOnPlugin implements SageTVPlugin {
         if (CFG_SYNC_NOW.equals(setting)) return "Sync Now";
         if (CFG_STATUS.equals(setting)) return "Status";
         if (CFG_ACCOUNT_INFO.equals(setting)) return "Account Info";
-        if (CFG_LINKED_SERVICES.equals(setting)) return "Linked Services";
         if (CFG_QUEUED.equals(setting)) return "Queued Recordings";
         if (CFG_RELOGIN.equals(setting)) return "Re-Login";
         if (CFG_LOGOUT.equals(setting)) return "Logout";
@@ -351,39 +345,49 @@ public class PlayOnPlugin implements SageTVPlugin {
         try {
             PlayOnAccount account = apiClient.account();
             if (account != null) {
-                return "Plan: " + (account.getPlan() != null ? account.getPlan() : "N/A") +
-                        " | Credits: " + account.getCredits() +
-                        (account.getStorageUsed() != null ?
-                                " | Storage: " + account.getStorageUsed() : "");
+                return "Credits: " + account.getCredits();
             }
         } catch (Exception e) {
             LOG.log(Level.FINE, "Failed to get account info", e);
         }
-        return "Unable to retrieve account info";
+        return "Unable to retrieve";
     }
 
-    private String buildServicesText() {
+    private String buildAccountInfoHelp() {
         if (!apiClient.isAuthenticated()) return "Not connected";
         try {
-            List<PlayOnService> services = apiClient.services();
-            if (!services.isEmpty()) {
-                return services.stream()
-                        .filter(PlayOnService::isEnabled)
-                        .map(PlayOnService::getName)
-                        .collect(Collectors.joining(", "));
+            PlayOnAccount account = apiClient.account();
+            if (account != null) {
+                StringBuilder sb = new StringBuilder();
+                sb.append("Plan: ").append(account.getPlan() != null ? account.getPlan() : "N/A");
+                sb.append(" | Credits: ").append(account.getCredits());
+                if (account.getStorageUsed() != null) {
+                    sb.append(" | Storage: ").append(account.getStorageUsed());
+                }
+                if (account.getEmail() != null) {
+                    sb.append(" | ").append(account.getEmail());
+                }
+                return sb.toString();
             }
         } catch (Exception e) {
-            LOG.log(Level.FINE, "Failed to get services", e);
+            LOG.log(Level.FINE, "Failed to get account info", e);
         }
-        return "No services linked";
+        return "PlayOn Cloud account details (plan, credits).";
     }
 
     private String buildQueuedText() {
         if (syncScheduler == null) return "Not available";
         List<PlayOnRecording> queued = syncScheduler.getLastQueuedRecordings();
         if (queued.isEmpty()) return "No recordings queued";
+        return queued.size() + " recording" + (queued.size() != 1 ? "s" : "");
+    }
+
+    private String buildQueuedHelp() {
+        if (syncScheduler == null) return "Not available";
+        List<PlayOnRecording> queued = syncScheduler.getLastQueuedRecordings();
+        if (queued.isEmpty()) return "No recordings currently queued or in-progress.";
         return queued.stream()
-                .map(r -> r.getName() + " (" + r.getStatus() + ")")
-                .collect(Collectors.joining("\n"));
+                .map(r -> r.getName() + " (" + r.getStatusDisplay() + ")")
+                .collect(Collectors.joining(", "));
     }
 }

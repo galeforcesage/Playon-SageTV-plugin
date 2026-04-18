@@ -7,6 +7,9 @@ import com.galeforcesage.playon.api.models.PlayOnAccount;
 import com.galeforcesage.playon.api.models.PlayOnRecording;
 import com.galeforcesage.playon.api.models.PlayOnService;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.MapperFeature;
+
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -34,6 +37,7 @@ public class PlayOnApiClient {
 
     private static final Logger LOG = Logger.getLogger(PlayOnApiClient.class.getName());
     private static final String DEFAULT_API_BASE = "https://api.playonrecorder.com/v3";
+    private static final String CDS_BASE = "https://cds.playonrecorder.com/api/v6";
     private static final int CONNECT_TIMEOUT_MS = 30_000;
     private static final int READ_TIMEOUT_MS = 60_000;
     private static final int DOWNLOAD_TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -48,6 +52,13 @@ public class PlayOnApiClient {
     private String storedEmail;
     private String storedPassword;
 
+    // Cached results for non-blocking UI access
+    private volatile PlayOnAccount cachedAccount;
+    private volatile List<PlayOnService> cachedServices;
+    private volatile long accountCacheTime;
+    private volatile long servicesCacheTime;
+    private static final long CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
     public PlayOnApiClient() {
         this(DEFAULT_API_BASE);
     }
@@ -55,6 +66,8 @@ public class PlayOnApiClient {
     public PlayOnApiClient(String apiBase) {
         this.apiBase = apiBase;
         this.mapper = new ObjectMapper();
+        this.mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        this.mapper.configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
         this.auth = new PlayOnAuth(mapper, apiBase);
     }
 
@@ -94,7 +107,7 @@ public class PlayOnApiClient {
     // ==================== Recordings API ====================
 
     public List<PlayOnRecording> available() {
-        return fetchRecordingList("/recordings/available");
+        return fetchRecordingList("/library");
     }
 
     public List<PlayOnRecording> recordings() {
@@ -102,7 +115,7 @@ public class PlayOnApiClient {
     }
 
     public List<PlayOnRecording> queue() {
-        return fetchRecordingList("/recordings/queue");
+        return fetchRecordingList("/queue");
     }
 
     private List<PlayOnRecording> fetchRecordingList(String endpoint) {
@@ -112,6 +125,29 @@ public class PlayOnApiClient {
             String responseBody = authenticatedGet(apiBase + endpoint);
             if (responseBody != null) {
                 JsonNode root = mapper.readTree(responseBody);
+                LOG.info("Response from " + endpoint + " keys: " + getFieldNames(root));
+
+                // Check for API-level errors: {success: false, error_code, error_message}
+                if (root.has("success") && !root.get("success").asBoolean(true)) {
+                    String errCode = root.has("error_code") ? root.get("error_code").asText() : "unknown";
+                    String errMsg = root.has("error_message") ? root.get("error_message").asText() : "unknown";
+                    LOG.warning("API error from " + endpoint + ": code=" + errCode + " msg=" + errMsg);
+                    return Collections.emptyList();
+                }
+                if (root.has("error_code") || root.has("error_message")) {
+                    String errCode = root.has("error_code") ? root.get("error_code").asText() : "unknown";
+                    String errMsg = root.has("error_message") ? root.get("error_message").asText() : "unknown";
+                    LOG.warning("API error from " + endpoint + ": code=" + errCode + " msg=" + errMsg);
+                    return Collections.emptyList();
+                }
+
+                // Unwrap {success, data} envelope if present
+                if (root.has("data") && !root.get("data").isNull()) {
+                    root = root.get("data");
+                    LOG.info("Unwrapped data envelope, type: " +
+                            (root.isArray() ? "array[" + root.size() + "]" : "object keys: " + getFieldNames(root)));
+                }
+
                 JsonNode items;
                 if (root.isArray()) {
                     items = root;
@@ -119,9 +155,18 @@ public class PlayOnApiClient {
                     items = root.get("recordings");
                 } else if (root.has("items")) {
                     items = root.get("items");
+                } else if (root.has("entries")) {
+                    items = root.get("entries");
+                } else if (root.has("results")) {
+                    items = root.get("results");
                 } else {
                     LOG.warning("Unexpected response format from " + endpoint);
                     return Collections.emptyList();
+                }
+
+                // Log first entry fields so we can see actual API field names
+                if (items.size() > 0) {
+                    LOG.info("First entry from " + endpoint + " keys: " + getFieldNames(items.get(0)));
                 }
 
                 List<PlayOnRecording> recordings = mapper.readValue(
@@ -155,7 +200,7 @@ public class PlayOnApiClient {
             }
 
             HttpURLConnection conn = openConnection(
-                    apiBase + "/recordings/" + downloadId + "/download");
+                    apiBase + "/library/" + downloadId + "/download");
             conn.setRequestProperty("Authorization", "Bearer " + auth.getJwt());
             conn.setReadTimeout(DOWNLOAD_TIMEOUT_MS);
             conn.setInstanceFollowRedirects(true);
@@ -269,37 +314,90 @@ public class PlayOnApiClient {
     // ==================== Services ====================
 
     public List<PlayOnService> services() {
+        // Return cached result if fresh
+        if (cachedServices != null && (System.currentTimeMillis() - servicesCacheTime) < CACHE_TTL_MS) {
+            return cachedServices;
+        }
         if (!ensureAuthenticated()) return Collections.emptyList();
 
+        // Services come from the CDS (content delivery) server, not the API server
         try {
-            String responseBody = authenticatedGet(apiBase + "/services");
+            String responseBody = authenticatedGet(CDS_BASE + "/content");
             if (responseBody != null) {
                 JsonNode root = mapper.readTree(responseBody);
+                LOG.info("CDS /content response type: " +
+                        (root.isArray() ? "array[" + root.size() + "]" : "object keys: " + getFieldNames(root)));
+                // The CDS might return raw array or {success, data} envelope
+                if (root.has("data") && !root.get("data").isNull()) {
+                    root = root.get("data");
+                }
                 JsonNode items = root.isArray() ? root :
-                        root.has("services") ? root.get("services") : root;
-                return mapper.readValue(items.traverse(),
-                        new TypeReference<List<PlayOnService>>() {});
+                        root.has("entries") ? root.get("entries") : root;
+                if (items.isArray() && items.size() > 0) {
+                    LOG.info("First CDS content entry keys: " + getFieldNames(items.get(0)));
+                    cachedServices = mapper.readValue(items.traverse(),
+                            new TypeReference<List<PlayOnService>>() {});
+                    LOG.info("Loaded " + cachedServices.size() + " services from CDS");
+                    servicesCacheTime = System.currentTimeMillis();
+                    return cachedServices;
+                }
             }
         } catch (IOException e) {
-            LOG.log(Level.WARNING, "Failed to fetch services", e);
+            LOG.log(Level.WARNING, "Failed to fetch CDS /content", e);
         }
-        return Collections.emptyList();
+        cachedServices = Collections.emptyList();
+        servicesCacheTime = System.currentTimeMillis();
+        return cachedServices;
     }
 
     // ==================== Account ====================
 
     public PlayOnAccount account() {
+        // Return cached result if fresh
+        if (cachedAccount != null && (System.currentTimeMillis() - accountCacheTime) < CACHE_TTL_MS) {
+            return cachedAccount;
+        }
         if (!ensureAuthenticated()) return null;
 
+        // Try /account first, then fall back to login data
         try {
             String responseBody = authenticatedGet(apiBase + "/account");
             if (responseBody != null) {
-                return mapper.readValue(responseBody, PlayOnAccount.class);
+                JsonNode root = mapper.readTree(responseBody);
+                LOG.info("Account response keys: " + getFieldNames(root));
+                // Unwrap data envelope
+                if (root.has("data") && root.get("data").isObject()) {
+                    root = root.get("data");
+                    LOG.info("Account data keys: " + getFieldNames(root));
+                    // Log nested objects to discover structure
+                    if (root.has("Subscription") && root.get("Subscription").isObject()) {
+                        LOG.info("Account Subscription keys: " + getFieldNames(root.get("Subscription")));
+                    }
+                    if (root.has("Account") && root.get("Account").isObject()) {
+                        LOG.info("Account.Account keys: " + getFieldNames(root.get("Account")));
+                    }
+                    if (root.has("Globals") && root.get("Globals").isObject()) {
+                        LOG.info("Account.Globals keys: " + getFieldNames(root.get("Globals")));
+                    }
+                    if (root.has("ProductTypes") && root.get("ProductTypes").isArray()) {
+                        LOG.info("Account.ProductTypes: " + root.get("ProductTypes").toString());
+                    }
+                }
+                cachedAccount = mapper.readValue(root.traverse(), PlayOnAccount.class);
+                accountCacheTime = System.currentTimeMillis();
+                return cachedAccount;
             }
         } catch (IOException e) {
-            LOG.log(Level.WARNING, "Failed to fetch account info", e);
+            LOG.log(Level.FINE, "Failed to fetch /account", e);
         }
-        return null;
+
+        // Fall back to login data (we know login returns email, name, id)
+        PlayOnAccount fallback = new PlayOnAccount();
+        fallback.setEmail(auth.getAuthenticatedEmail());
+        fallback.setPlan("Unknown");
+        cachedAccount = fallback;
+        accountCacheTime = System.currentTimeMillis();
+        return cachedAccount;
     }
 
     // ==================== Notifications ====================
@@ -372,23 +470,39 @@ public class PlayOnApiClient {
      * Perform an authenticated GET request and return the response body, or null on failure.
      */
     private String authenticatedGet(String url) throws IOException {
-        HttpURLConnection conn = openConnection(url);
-        conn.setRequestProperty("Authorization", "Bearer " + auth.getJwt());
-
-        int status = conn.getResponseCode();
-        if (status == 200) {
-            String body = readResponseBody(conn);
-            conn.disconnect();
-            return body;
-        } else if (status == 401) {
-            LOG.warning("Auth expired, will re-auth next cycle");
-            auth.logout();
-            conn.disconnect();
-        } else {
-            LOG.warning("Request failed: HTTP " + status + " for " + url);
-            conn.disconnect();
+        // Use Bearer JWT for API calls (the 'token' field from login, starts with eyJ...)
+        String jwt = auth.getJwt();
+        if (jwt != null) {
+            HttpURLConnection conn = openConnection(url);
+            conn.setRequestProperty("Authorization", "Bearer " + jwt);
+            int status = conn.getResponseCode();
+            if (status == 200) {
+                String body = readResponseBody(conn);
+                conn.disconnect();
+                return body;
+            } else if (status == 401) {
+                LOG.warning("Auth expired (Bearer JWT), will re-auth next cycle");
+                auth.logout();
+                conn.disconnect();
+            } else {
+                String errorBody = readErrorBody(conn);
+                LOG.warning("Request failed: HTTP " + status + " for " + url +
+                        (errorBody != null ? " body=" + errorBody.substring(0, Math.min(errorBody.length(), 500)) : ""));
+                conn.disconnect();
+            }
         }
         return null;
+    }
+
+    private String readErrorBody(HttpURLConnection conn) {
+        try (InputStream err = conn.getErrorStream()) {
+            if (err == null) return null;
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            copyStream(err, baos);
+            return baos.toString("UTF-8");
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private HttpURLConnection openConnection(String url) throws IOException {
@@ -414,5 +528,17 @@ public class PlayOnApiClient {
         while ((bytesRead = in.read(buffer)) != -1) {
             out.write(buffer, 0, bytesRead);
         }
+    }
+
+    private String getFieldNames(JsonNode node) {
+        if (node.isArray()) return "array[" + node.size() + "]";
+        StringBuilder sb = new StringBuilder("[");
+        java.util.Iterator<String> names = node.fieldNames();
+        while (names.hasNext()) {
+            if (sb.length() > 1) sb.append(", ");
+            sb.append(names.next());
+        }
+        sb.append("]");
+        return sb.toString();
     }
 }

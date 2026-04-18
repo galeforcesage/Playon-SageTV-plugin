@@ -231,4 +231,22 @@ public class ConfigManager {
         cipher.init(Cipher.DECRYPT_MODE, encryptionKey);
         return new String(cipher.doFinal(Base64.getDecoder().decode(ciphertext)));
     }
+
+    /**
+     * CLI tool to configure credentials from the command line.
+     * Usage: java -cp Sage.jar:JARs/* com.galeforcesage.playon.sagetv.ConfigManager set-credentials email password
+     */
+    public static void main(String[] args) {
+        if (args.length < 3 || !"set-credentials".equals(args[0])) {
+            System.out.println("Usage: ConfigManager set-credentials <email> <password>");
+            System.exit(1);
+        }
+        ConfigManager cm = new ConfigManager();
+        cm.setCloudEmail(args[1]);
+        cm.setCloudPassword(args[2]);
+        cm.save();
+        System.out.println("Credentials saved to " + cm.configPath);
+        System.out.println("Email: " + cm.getCloudEmail());
+        System.out.println("Password stored (encrypted): OK");
+    }
 }

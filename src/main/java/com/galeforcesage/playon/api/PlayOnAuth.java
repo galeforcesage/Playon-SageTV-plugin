@@ -66,17 +66,37 @@ public class PlayOnAuth {
             if (status == 200) {
                 String responseBody = readResponse(conn);
                 JsonNode json = mapper.readTree(responseBody);
+                LOG.info("PlayOn login response (keys): " + getResponseKeys(responseBody));
 
-                // Extract JWT and auth_token
-                this.jwt = extractString(json, "jwt");
-                this.authToken = extractString(json, "auth_token");
-                if (this.jwt == null) {
-                    this.jwt = this.authToken; // fallback
+                // PlayOn API wraps response in {success, data} envelope
+                JsonNode data = json;
+                if (json.has("data") && json.get("data").isObject()) {
+                    data = json.get("data");
+                    LOG.info("PlayOn login data keys: " + fieldList(data));
                 }
 
-                // Extract login_expiry (UNIX timestamp)
-                if (json.has("login_expiry")) {
+                // Extract both token types — PlayOn returns both 'token' and 'auth_token'
+                String tokenVal = extractString(data, "token");
+                String authTokenVal = extractString(data, "auth_token");
+                // Prefer auth_token for API calls; fall back to token
+                this.authToken = authTokenVal != null ? authTokenVal : tokenVal;
+                this.jwt = tokenVal != null ? tokenVal : authTokenVal;
+                // Also try other field names if both were null
+                if (this.authToken == null) this.authToken = extractString(data, "jwt");
+                if (this.authToken == null) this.authToken = extractString(data, "access_token");
+                if (this.authToken == null) this.authToken = extractString(data, "session_token");
+                if (this.jwt == null) this.jwt = this.authToken;
+                LOG.info("Token extracted (auth_token=" + (authTokenVal != null ? authTokenVal.substring(0, Math.min(8, authTokenVal.length())) + "..." : "null") +
+                        ", token=" + (tokenVal != null ? tokenVal.substring(0, Math.min(8, tokenVal.length())) + "..." : "null") + ")");
+
+                // Extract login_expiry — check data envelope first, then top level
+                if (data.has("login_expiry")) {
+                    this.loginExpiry = data.get("login_expiry").asLong();
+                } else if (json.has("login_expiry")) {
                     this.loginExpiry = json.get("login_expiry").asLong();
+                } else if (data.has("expires_in")) {
+                    this.loginExpiry = (System.currentTimeMillis() / 1000) +
+                            data.get("expires_in").asLong();
                 } else if (json.has("expires_in")) {
                     this.loginExpiry = (System.currentTimeMillis() / 1000) +
                             json.get("expires_in").asLong();
@@ -113,6 +133,10 @@ public class PlayOnAuth {
         return jwt;
     }
 
+    public String getAuthToken() {
+        return authToken;
+    }
+
     public String getAuthenticatedEmail() {
         return authenticatedEmail;
     }
@@ -146,5 +170,25 @@ public class PlayOnAuth {
             }
             return baos.toString("UTF-8");
         }
+    }
+
+    private String getResponseKeys(String responseBody) {
+        try {
+            JsonNode json = mapper.readTree(responseBody);
+            return fieldList(json);
+        } catch (Exception e) {
+            return "(parse error)";
+        }
+    }
+
+    private String fieldList(JsonNode node) {
+        StringBuilder sb = new StringBuilder("[");
+        java.util.Iterator<String> names = node.fieldNames();
+        while (names.hasNext()) {
+            if (sb.length() > 1) sb.append(", ");
+            sb.append(names.next());
+        }
+        sb.append("]");
+        return sb.toString();
     }
 }

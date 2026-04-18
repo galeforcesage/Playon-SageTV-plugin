@@ -9,10 +9,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class PlayOnService {
 
-    @JsonProperty("id")
+    @JsonProperty("ID")
     private String id;
 
-    @JsonProperty("name")
+    @JsonProperty("Name")
     private String name;
 
     @JsonProperty("enabled")

@@ -64,16 +64,39 @@ public class PlayOnRecording {
 
     // ==================== Status checks ====================
 
+    /**
+     * Maps numeric status codes to human-readable strings.
+     * Known codes: 0=Queued, 1=Recording, 2=Completed, 3=Failed, 4=Expired
+     */
+    public String getStatusDisplay() {
+        if (status == null) return "Unknown";
+        switch (status) {
+            case "0": return "Queued";
+            case "1": return "Recording";
+            case "2": return "Completed";
+            case "3": return "Failed";
+            case "4": return "Expired";
+            default:
+                // If it's already a word (e.g. "completed"), capitalize it
+                if (status.length() > 0 && !Character.isDigit(status.charAt(0))) {
+                    return status.substring(0, 1).toUpperCase() + status.substring(1).toLowerCase();
+                }
+                return status;
+        }
+    }
+
     public boolean isCompleted() {
-        return "completed".equalsIgnoreCase(status) || "done".equalsIgnoreCase(status);
+        return "completed".equalsIgnoreCase(status) || "done".equalsIgnoreCase(status)
+                || "2".equals(status);
     }
 
     public boolean isRecording() {
-        return "recording".equalsIgnoreCase(status);
+        return "recording".equalsIgnoreCase(status) || "1".equals(status);
     }
 
     public boolean isQueued() {
-        return "queued".equalsIgnoreCase(status) || "pending".equalsIgnoreCase(status);
+        return "queued".equalsIgnoreCase(status) || "pending".equalsIgnoreCase(status)
+                || "0".equals(status);
     }
 
     public boolean isEpisode() {
