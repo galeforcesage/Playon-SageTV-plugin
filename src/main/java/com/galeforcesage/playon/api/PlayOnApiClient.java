@@ -236,6 +236,12 @@ public class PlayOnApiClient {
                     conn.disconnect();
                 }
 
+                // Validate the downloaded file is actual media, not a JSON error response
+                if (!validateDownloadedFile(tempFile)) {
+                    Files.deleteIfExists(tempFile);
+                    return false;
+                }
+
                 Files.move(tempFile, outputPath, StandardCopyOption.REPLACE_EXISTING);
                 LOG.info("Downloaded: " + outputPath +
                         " (" + Files.size(outputPath) / 1_048_576 + " MB)");
@@ -275,6 +281,10 @@ public class PlayOnApiClient {
                     out.close();
                     conn.disconnect();
                 }
+                if (!validateDownloadedFile(tempFile)) {
+                    Files.deleteIfExists(tempFile);
+                    return false;
+                }
                 Files.move(tempFile, outputPath, StandardCopyOption.REPLACE_EXISTING);
                 return true;
             }
@@ -283,6 +293,43 @@ public class PlayOnApiClient {
             LOG.log(Level.SEVERE, "Download from redirect URL failed", e);
         }
         return false;
+    }
+
+    /**
+     * Validates that a downloaded file is actual media content, not a JSON error response.
+     * Checks for JSON error signatures like {"success":false in the first bytes.
+     */
+    private boolean validateDownloadedFile(Path file) {
+        try {
+            long size = Files.size(file);
+            if (size == 0) {
+                LOG.warning("Downloaded file is empty: " + file);
+                return false;
+            }
+            // Read first 64 bytes to check for JSON error response
+            byte[] header = new byte[(int) Math.min(64, size)];
+            try (InputStream in = Files.newInputStream(file)) {
+                int read = in.read(header);
+                if (read > 0) {
+                    String start = new String(header, 0, read, "UTF-8").trim();
+                    if (start.startsWith("{")) {
+                        // Looks like JSON — this is not a media file
+                        // Read the full content (capped) for the error log
+                        String fullContent = start;
+                        if (size <= 4096) {
+                            fullContent = new String(Files.readAllBytes(file), "UTF-8");
+                        }
+                        LOG.warning("Download returned JSON error instead of media file: " +
+                                fullContent.substring(0, Math.min(fullContent.length(), 500)));
+                        return false;
+                    }
+                }
+            }
+            return true;
+        } catch (IOException e) {
+            LOG.log(Level.WARNING, "Failed to validate downloaded file: " + file, e);
+            return false;
+        }
     }
 
     // ==================== Mark as Downloaded ====================
